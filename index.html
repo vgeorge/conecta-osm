@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Conecta OSM</title>
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    #map {
+      height: 100vh;
+      width: 100%;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="map"></div>
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <!-- Custom JS to load and display GeoJSON -->
+  <script>
+    // Initialize the map
+    const map = L.map('map').setView([-30.0346, -51.2177], 10); // Initial coordinates and zoom level
+
+    // Add a tile layer to the map (OpenStreetMap in this case)
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+
+    // Load the GeoJSON file
+    fetch('routes.geojson')
+      .then(response => response.json())
+      .then(data => {
+        // Define a function to run once for each feature in the data
+        function onEachFeature(feature, layer) {
+          const { from, to } = feature.properties;
+          const { coordinates } = feature.geometry;
+
+          const osmUrl = `https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=${coordinates[0][1]}%2C${coordinates[0][0]}%3B${coordinates[1][1]}%2C${coordinates[1][0]}`;
+          layer.bindPopup(`From: ${from}<br>To: ${to}<br><a href="${osmUrl}" target="_blank">View on OSM</a>`);
+
+        }
+
+        // Add the GeoJSON layer to the map
+        const geoJsonLayer = L.geoJSON(data, {
+          style: function (feature) {
+            return {
+              color: feature.properties.stroke,
+              weight: 2,
+              opacity: 1,
+              weight: 5
+            };
+          },
+          onEachFeature: onEachFeature // Bind the tooltip to each feature
+        }).addTo(map);
+
+        // Fit the map to the bounds of the GeoJSON layer
+        map.fitBounds(geoJsonLayer.getBounds());
+      })
+      .catch(error => {
+        console.error('Error loading the GeoJSON file:', error);
+      });
+  </script>
+</body>
+
+</html>

@@ -2,6 +2,8 @@ import { parse } from "csv-parse/sync";
 import fs from "fs-extra";
 import * as turf from "@turf/turf";
 
+const ROUTES_GEOJSON_FILE = "public/routes.geojson";
+
 async function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -127,7 +129,6 @@ async function main() {
         },
       }));
 
-      // Open routes.geojson file if exists and update features
       try {
         const routesGeojson = await fs.readJson("routes.geojson");
 
@@ -157,7 +158,7 @@ async function main() {
       console.error("Failed to fetch data:", error);
     }
 
-    await delay(20000); // delay next request
+    await delay(20000);
   }
 }
 
