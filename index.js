@@ -6,13 +6,14 @@ async function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function main() {
-  const citiesCsv = await fs.readFile("municipios.csv", "utf8");
-  let cities = parse(citiesCsv, { columns: true, skip_empty_lines: true });
+async function readAndParseCsv(filePath) {
+  const citiesCsv = await fs.readFile(filePath, "utf8");
+  const cities = parse(citiesCsv, { columns: true, skip_empty_lines: true });
+  return cities.filter((city) => city.uf_code === "RS");
+}
 
-  cities = cities.filter((city) => city.uf_code === "RS");
-
-  const citiesGeoJson = {
+function convertToGeoJson(cities) {
+  return {
     type: "FeatureCollection",
     features: cities.map((city) => ({
       type: "Feature",
@@ -23,15 +24,44 @@ async function main() {
       properties: {
         name: city.name,
         state: city.uf_code,
+        slug_name: city.slug_name,
       },
     })),
   };
+}
 
-  // for (let i = 0; i < citiesGeoJson.features.length; i++) {
-  for (let i = 0; i < 2; i++) {
+async function fetchDistances(url) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
+  }
+  return await response.json();
+}
+
+function generateRoutePairs(currentCity, closestCities, distancesData) {
+  return closestCities.map((item, index) => ({
+    city: item.city,
+    distance: item.distance,
+    routeDistance: distancesData.distances[0][index + 1] / 1000,
+    ratio: distancesData.distances[0][index + 1] / 1000 / item.distance,
+    lineArc: turf.lineString([
+      currentCity.geometry.coordinates,
+      item.city.geometry.coordinates,
+    ]),
+  }));
+}
+
+async function saveGeoJsonToFile(filePath, data) {
+  await fs.ensureDir("routes");
+  await fs.writeFile(filePath, JSON.stringify(data, null, 2));
+}
+
+async function main() {
+  const cities = await readAndParseCsv("municipios.csv");
+  const citiesGeoJson = convertToGeoJson(cities);
+
+  for (let i = 0; i < citiesGeoJson.features.length; i++) {
     const currentCity = citiesGeoJson.features[i];
-
-    // console.log(JSON.stringify(currentCity, null, 2));
 
     const distances = citiesGeoJson.features.map((targetCity) => ({
       city: targetCity,
@@ -47,37 +77,46 @@ async function main() {
       .sort((a, b) => a.distance - b.distance)
       .slice(0, 5);
 
-    // console.log(JSON.stringify(closestCities, null, 2));
-
-    // Constructing the URL for OSRM API
     const coordinates = closestCities
       .map((item) => item.city.geometry.coordinates.join(","))
       .join(";");
 
-    const url = `http://router.project-osrm.org/table/v1/driving/${currentCity.geometry.coordinates.join(
+    const routeToUrl = `http://router.project-osrm.org/table/v1/driving/${currentCity.geometry.coordinates.join(
       ","
     )};${coordinates}?annotations=distance&sources=0`;
 
     try {
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      const data = await response.json();
+      const distancesData = await fetchDistances(routeToUrl);
 
-      const routePairs = closestCities.map((item, index) => ({
-        city: item.city.properties.name,
-        distance: item.distance,
-        routeDistance: data.distances[0][index + 1] / 1000,
-      }));
-      console.log(routePairs);
+      const routePairs = generateRoutePairs(
+        currentCity,
+        closestCities,
+        distancesData
+      );
 
-      // console.log(`Data for ${currentCity.properties.name}: `, data);
+      const routeToGeojson = {
+        type: "FeatureCollection",
+        features: routePairs.map((item) => ({
+          type: "Feature",
+          geometry: item.lineArc.geometry,
+          properties: {
+            city: item.city,
+            distance: item.distance,
+            routeDistance: item.routeDistance,
+            ratio: item.ratio,
+          },
+        })),
+      };
+
+      await saveGeoJsonToFile(
+        `routes/${currentCity.properties.slug_name}.geojson`,
+        routeToGeojson
+      );
     } catch (error) {
       console.error("Failed to fetch data:", error);
     }
 
-    await delay(20000); // Wait for 20 seconds before the next request
+    await delay(20000); // delay next request
   }
 }
 
