@@ -30,27 +30,6 @@ function convertToGeoJson(cities) {
   };
 }
 
-async function fetchDistances(url) {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
-  }
-  return await response.json();
-}
-
-function generateRoutePairs(currentCity, closestCities, distancesData) {
-  return closestCities.map((item, index) => ({
-    city: item.city,
-    distance: item.distance,
-    routeDistance: distancesData.distances[0][index + 1] / 1000,
-    ratio: distancesData.distances[0][index + 1] / 1000 / item.distance,
-    lineArc: turf.lineString([
-      currentCity.geometry.coordinates,
-      item.city.geometry.coordinates,
-    ]),
-  }));
-}
-
 async function saveGeoJsonToFile(filePath, data) {
   await fs.ensureDir("routes");
   await fs.writeFile(filePath, JSON.stringify(data, null, 2));
@@ -62,6 +41,8 @@ async function main() {
 
   for (let i = 0; i < citiesGeoJson.features.length; i++) {
     const currentCity = citiesGeoJson.features[i];
+
+    console.log("Processing city:", currentCity.properties.name);
 
     const distances = citiesGeoJson.features.map((targetCity) => ({
       city: targetCity,
@@ -86,32 +67,92 @@ async function main() {
     )};${coordinates}?annotations=distance&sources=0`;
 
     try {
-      const distancesData = await fetchDistances(routeToUrl);
+      const { distances: distancesTo } = await (await fetch(routeToUrl)).json();
 
-      const routePairs = generateRoutePairs(
-        currentCity,
-        closestCities,
-        distancesData
-      );
+      const distanceToFeatures = closestCities.map((item, index) => ({
+        type: "Feature",
+        geometry: turf.lineOffset(
+          turf.lineString([
+            currentCity.geometry.coordinates,
+            item.city.geometry.coordinates,
+          ]),
+          1
+        ).geometry,
+        properties: {
+          from: currentCity.properties.slug_name,
+          to: item.city.properties.slug_name,
+          distance: item.distance,
+          routeDistance: distancesTo[0][index + 1] / 1000,
+          ratio: distancesTo[0][index + 1] / 1000 / item.distance,
+        },
+      }));
 
-      const routeToGeojson = {
-        type: "FeatureCollection",
-        features: routePairs.map((item) => ({
-          type: "Feature",
-          geometry: item.lineArc.geometry,
-          properties: {
-            city: item.city,
-            distance: item.distance,
-            routeDistance: item.routeDistance,
-            ratio: item.ratio,
-          },
-        })),
-      };
+      await delay(2000);
 
-      await saveGeoJsonToFile(
-        `routes/${currentCity.properties.slug_name}.geojson`,
-        routeToGeojson
-      );
+      const { distances: distancesFrom } = await (
+        await fetch(routeToUrl)
+      ).json();
+
+      const distanceFromFeatures = closestCities.map((item, index) => ({
+        type: "Feature",
+        geometry: turf.lineOffset(
+          turf.lineString([
+            item.city.geometry.coordinates,
+            currentCity.geometry.coordinates,
+          ]),
+          1
+        ).geometry,
+        properties: {
+          from: item.city.properties.slug_name,
+          to: currentCity.properties.slug_name,
+          distance: item.distance,
+          routeDistance: distancesFrom[0][index + 1] / 1000,
+          ratio: distancesFrom[0][index + 1] / 1000 / item.distance,
+        },
+      }));
+
+      const mergedDistanceFeatures = [
+        ...distanceToFeatures,
+        ...distanceFromFeatures,
+      ].map((item) => ({
+        ...item,
+        properties: {
+          ...item.properties,
+          stroke:
+            item.properties.ratio > 2
+              ? "#f00"
+              : item.properties.ratio > 1.5
+              ? "#ff0"
+              : "#0f0",
+        },
+      }));
+
+      // Open routes.geojson file if exists and update features
+      try {
+        const routesGeojson = await fs.readJson("routes.geojson");
+
+        // Remove duplicated features
+        const mergedDistanceFeaturesIds = mergedDistanceFeatures.map(
+          (item) => item.properties.from + item.properties.to
+        );
+        routesGeojson.features = routesGeojson.features.filter(
+          (item) =>
+            !mergedDistanceFeaturesIds.includes(
+              item.properties.from + item.properties.to
+            )
+        );
+
+        routesGeojson.features = [
+          ...routesGeojson.features,
+          ...mergedDistanceFeatures,
+        ];
+        await fs.writeJson("routes.geojson", routesGeojson);
+      } catch (error) {
+        await saveGeoJsonToFile("routes.geojson", {
+          type: "FeatureCollection",
+          features: mergedDistanceFeatures,
+        });
+      }
     } catch (error) {
       console.error("Failed to fetch data:", error);
     }
