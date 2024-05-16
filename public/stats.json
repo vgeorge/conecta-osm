@@ -1,0 +1,13 @@
+{
+  "totalFeatures": 3078,
+  "totalCities": 307.8,
+  "totalRoutes": 1539,
+  "lastUpdatedCity": "xangri-la",
+  "updatedAt": "2024-05-15T21:06:03.547Z",
+  "flagCount": {
+    "undefined": 90,
+    "green": 1736,
+    "yellow": 842,
+    "red": 410
+  }
+}

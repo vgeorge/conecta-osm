@@ -3,6 +3,13 @@ import fs from "fs-extra";
 import * as turf from "@turf/turf";
 
 const ROUTES_GEOJSON_FILE = "public/routes.geojson";
+const STATS_FILE = "public/stats.json";
+
+const FLAG_COLORS = {
+  red: "#f00",
+  yellow: "#ff0",
+  green: "#0f0",
+};
 
 async function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -40,6 +47,21 @@ async function saveGeoJsonToFile(filePath, data) {
 async function main() {
   const cities = await readAndParseCsv("municipios.csv");
   const citiesGeoJson = convertToGeoJson(cities);
+
+  // Open stats file
+  let stats = {};
+  try {
+    stats = await fs.readJson(STATS_FILE);
+  } catch (error) {
+    await fs.writeJson(STATS_FILE, stats);
+  }
+
+  if (stats.lastUpdatedCity) {
+    const lastUpdatedCityIndex = citiesGeoJson.features.findIndex(
+      (item) => item.properties.slug_name === stats.lastUpdatedCity
+    );
+    citiesGeoJson.features = citiesGeoJson.features.slice(lastUpdatedCityIndex);
+  }
 
   for (let i = 0; i < citiesGeoJson.features.length; i++) {
     const currentCity = citiesGeoJson.features[i];
@@ -116,21 +138,21 @@ async function main() {
       const mergedDistanceFeatures = [
         ...distanceToFeatures,
         ...distanceFromFeatures,
-      ].map((item) => ({
-        ...item,
-        properties: {
-          ...item.properties,
-          stroke:
-            item.properties.ratio > 2
-              ? "#f00"
-              : item.properties.ratio > 1.5
-              ? "#ff0"
-              : "#0f0",
-        },
-      }));
+      ].map((item) => {
+        const { ratio } = item.properties;
+        const flag = ratio > 2 ? "red" : ratio > 1.5 ? "yellow" : "green";
+        return {
+          ...item,
+          properties: {
+            ...item.properties,
+            flag,
+            stroke: FLAG_COLORS[flag] || "#000",
+          },
+        };
+      });
 
       try {
-        const routesGeojson = await fs.readJson("routes.geojson");
+        const routesGeojson = await fs.readJson(ROUTES_GEOJSON_FILE);
 
         // Remove duplicated features
         const mergedDistanceFeaturesIds = mergedDistanceFeatures.map(
@@ -147,9 +169,27 @@ async function main() {
           ...routesGeojson.features,
           ...mergedDistanceFeatures,
         ];
-        await fs.writeJson("routes.geojson", routesGeojson);
+        await fs.writeJson(ROUTES_GEOJSON_FILE, routesGeojson);
+
+        const stats = {
+          totalFeatures: routesGeojson.features.length,
+          totalCities: routesGeojson.features.length / 10,
+          totalRoutes: routesGeojson.features.length / 2,
+          lastUpdatedCity: currentCity.properties.slug_name,
+          updatedAt: new Date().toISOString(),
+          flagCount: routesGeojson.features.reduce(
+            (acc, item) => ({
+              ...acc,
+              [item.properties.flag]: (acc[item.properties.flag] || 0) + 1,
+            }),
+            {}
+          ),
+        };
+        await fs.writeJson(STATS_FILE, stats, { spaces: 2 });
+
+        console.log("Finished processing city:", currentCity.properties.name);
       } catch (error) {
-        await saveGeoJsonToFile("routes.geojson", {
+        await saveGeoJsonToFile(ROUTES_GEOJSON_FILE, {
           type: "FeatureCollection",
           features: mergedDistanceFeatures,
         });
@@ -158,7 +198,7 @@ async function main() {
       console.error("Failed to fetch data:", error);
     }
 
-    await delay(20000);
+    await delay(10000);
   }
 }
 
